@@ -3,6 +3,7 @@ backoff; stdout/stderr go to .agentflow/logs/<step>-<replica>.log and the last l
 from __future__ import annotations
 
 import asyncio
+import importlib.util
 import os
 import shlex
 import socket
@@ -16,7 +17,20 @@ import httpx
 from .sources import Source
 from .spec import Step
 
-SDK_DIR = Path(__file__).resolve().parents[1] / "sdk" / "python"
+
+
+def _sdk_dir() -> Path:
+    """Directory holding agentflow_step.py: the checkout's sdk/python, else wherever the wheel installed it."""
+    repo = Path(__file__).resolve().parents[1] / "sdk" / "python"
+    if (repo / "agentflow_step.py").exists():
+        return repo
+    spec = importlib.util.find_spec("agentflow_step")
+    if spec is None or spec.origin is None:
+        raise RuntimeError("agentflow_step not found: reinstall agentflow or run from a checkout")
+    return Path(spec.origin).resolve().parent
+
+
+SDK_DIR = _sdk_dir()
 
 
 def free_port() -> int:

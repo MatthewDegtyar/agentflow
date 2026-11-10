@@ -35,7 +35,25 @@ uv run python -m agentflow query "select step, count(*) from events where event=
 uv run pytest -q
 ```
 
-State lives in `.agentflow/` (event log `events.duckdb` + `events.jsonl`, cloned repos, per-step venvs, process logs).
+State lives in `.agentflow/` next to the workflow's folder (event log `events.duckdb` + `events.jsonl`, cloned repos,
+per-step venvs, process logs), or in `--workdir`.
+
+### As a library in another project
+
+```bash
+uv pip install "git+https://github.com/MatthewDegtyar/agentflow"        # or: uv add "agentflow @ git+https://github.com/MatthewDegtyar/agentflow"
+python -m agentflow up path/to/flow.yaml --workdir .agentflow           # also installed as the `agentflow` command
+```
+The wheel ships the `agentflow` package and the step SDK as a top-level `agentflow_step` module, so step processes
+started by an installed runtime can `from agentflow_step import Step`. Step `path:` values and sink paths resolve
+relative to the YAML file. To embed the engine in-process:
+
+```python
+from agentflow import Engine, load
+wf, base_dir, text = load("flow.yaml")
+engine = Engine(wf, base_dir, text, work=Path(".agentflow"))
+await engine.start(); run_id = await engine.start_run({"msg": "hi"}); ...; await engine.stop()
+```
 
 ## Workflow YAML
 
