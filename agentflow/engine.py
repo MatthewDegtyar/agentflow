@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import random
+import socket
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -25,6 +27,7 @@ from .sources import fetch
 from .spec import Workflow
 
 PREVIEW_CHARS = 2000
+STATE_EVERY_S = 1.0      # how often a running engine refreshes <work>/state.json for `agentflow monitor`
 
 
 def new_id(prefix: str) -> str:
@@ -98,10 +101,16 @@ class Engine:
                 self._tasks.append(asyncio.create_task(self._worker(name)))
         self._tasks.append(asyncio.create_task(self._background()))
         self.ready = True
+        self.started_at = time.time()
+        self._write_engine_file("running")
+        self._write_state(live=True)
         log(f"workflow {self.wf.name!r} ready: {len(self.wf.steps)} steps, {total} worker slots")
 
     async def stop(self):
-        self.ready = False
+        was_ready, self.ready = self.ready, False
+        if was_ready:
+            self._write_state(live=False)
+            self._write_engine_file("stopped")
         for t in self._tasks:
             t.cancel()
         await asyncio.gather(*(p.stop() for p in self.procs.values()), return_exceptions=True)
@@ -115,6 +124,48 @@ class Engine:
             for name, q in self.queues.items():
                 self.metrics.sample(name, q.qsize(), self.inflight[name])
             await asyncio.to_thread(self.events.flush)
+            self._write_state(live=True)
+
+    # ------------------------------------------------------------------------------------------ monitor files
+    # `agentflow monitor` watches engines it doesn't own (embedded in other processes, one per run). It can't open a
+    # running engine's DuckDB file (DuckDB locks it), so each engine leaves two small files in its work dir:
+    #   engine.json  identity + topology + YAML, written at start and stop (status running|stopped)
+    #   state.json   live flow metrics + process health, refreshed every STATE_EVERY_S while running
+    # plus events.jsonl, the event log mirror the monitor queries.
+    def _atomic_write(self, name: str, obj: dict):
+        try:
+            tmp = self.work / f".{name}.{os.getpid()}.tmp"
+            tmp.write_text(json.dumps(obj, default=str))
+            os.replace(tmp, self.work / name)
+        except Exception:  # monitoring must never break a run
+            pass
+
+    def _write_engine_file(self, status: str):
+        try:
+            from importlib.metadata import version
+            ver = version("pyagentflow")
+        except Exception:
+            ver = None
+        topo = self.topology()
+        self._atomic_write("engine.json", {
+            "workflow": self.wf.name, "status": status, "pid": os.getpid(), "host": socket.gethostname(),
+            "started": getattr(self, "started_at", None), "stopped": time.time() if status == "stopped" else None,
+            "base_dir": str(self.base_dir), "agentflow_version": ver, "topology": topo})
+
+    def _write_state(self, live: bool):
+        now = time.time()
+        if live and now - getattr(self, "_state_written", 0) < STATE_EVERY_S:
+            return
+        self._state_written = now
+        topo = self.topology()
+        topo.pop("yaml", None)
+        try:
+            metrics = self.metrics.snapshot(self.capacity(), self.live(), window=60.0)
+        except Exception:
+            metrics = None
+        self._atomic_write("state.json", {"ts": now, "live": live, "pid": os.getpid(), "metrics": metrics,
+                                          "topology": topo,
+                                          "runs_in_memory": sum(1 for r in self.runs.values() if not r.done.is_set())})
 
     # ------------------------------------------------------------------------------------------ runs
     async def start_run(self, payload, session_id: str | None = None) -> str:

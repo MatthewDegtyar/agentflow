@@ -1,21 +1,31 @@
 "use client";
 import { useState } from "react";
 import FlowGraph from "@/components/FlowGraph";
-import { api, fmtMs, fmtPct, fmtRate, usePoll, type Metrics, type Workflow } from "@/lib/api";
+import WorkflowIndex from "@/components/WorkflowIndex";
+import { api, fmtMs, fmtPct, fmtRate, usePoll, useW, withW, type Health, type Metrics, type Workflow } from "@/lib/api";
 
 const WINDOWS = [30, 60, 300];
 
-export default function WorkflowPage() {
+export default function Home() {
+  const w = useW();
+  const { data: health } = usePoll<Health>("/health", 10000);
+  if (!health) return <p className="muted">Connecting…</p>;
+  if (health.mode === "monitor" && !w) return <WorkflowIndex health={health} />;
+  return <WorkflowPage monitor={health.mode === "monitor"} />;
+}
+
+function WorkflowPage({ monitor }: { monitor: boolean }) {
+  const wid = useW();
   const [win, setWin] = useState(60);
-  const { data: wf, error: wfErr } = usePoll<Workflow>("/workflow", 10000);
-  const { data: m } = usePoll<Metrics>(`/metrics?window=${win}`, 1500);
+  const { data: wf, error: wfErr } = usePoll<Workflow & { live?: boolean; status?: string }>("/workflow", monitor ? 3000 : 10000);
+  const { data: m } = usePoll<Metrics & { live?: boolean }>(`/metrics?window=${win}`, 1500);
   const [selected, setSelected] = useState<string | null>(null);
   const [rate, setRate] = useState(2);
   const [duration, setDuration] = useState(60);
   const [msg, setMsg] = useState<string | null>(null);
   const [showYaml, setShowYaml] = useState(false);
 
-  if (wfErr && !wf) return <p className="error">Can’t reach the runtime: {wfErr}. Start it with `python -m agentflow up workflows/&lt;file&gt;.yaml`.</p>;
+  if (wfErr && !wf) return <p className="error">{monitor ? wfErr : <>Can’t reach the runtime: {wfErr}. Start it with `python -m agentflow up workflows/&lt;file&gt;.yaml`.</>}</p>;
   if (!wf) return <p className="muted">Loading workflow…</p>;
 
   const runOne = async () => {
@@ -47,6 +57,12 @@ export default function WorkflowPage() {
             {wf.session_key ? <> · sessions keyed by <code>{wf.session_key}</code></> : null}
           </p>
         </div>
+        {monitor ? (
+          <div className="row" style={{ alignItems: "center", gap: 8 }}>
+            <span className={`pill ${wf.live ? "ok" : wf.status === "lost" ? "failed" : "idle"}`}>{wf.live ? "running" : wf.status}</span>
+            <span className="muted">{wf.live ? "live metrics (last 60s)" : "not running: flow metrics are empty; runs and logs are kept"}</span>
+          </div>
+        ) : (
         <div className="row" style={{ alignItems: "center", gap: 8 }}>
           <span className="muted">window</span>
           <select value={win} onChange={(e) => setWin(Number(e.target.value))}>
@@ -61,6 +77,7 @@ export default function WorkflowPage() {
             ? <button onClick={() => load(true)}>Stop load ({m.load.sent} sent)</button>
             : <button className="primary" onClick={() => load()} disabled={!wf.examples.length}>Generate load</button>}
         </div>
+        )}
       </div>
       {msg && <p className="muted" style={{ marginTop: -6 }}>{msg}</p>}
 
@@ -134,7 +151,7 @@ export default function WorkflowPage() {
                     <td className="num">{p.inflight} in flight</td><td className="num">{p.restarts} restarts</td></tr>
                 ))}
               </tbody></table>
-              <p><a href={`/logs?step=${encodeURIComponent(selected)}`}>Query this step’s logs →</a></p>
+              <p><a href={withW(`/logs?step=${encodeURIComponent(selected)}`, wid)}>Query this step’s logs →</a></p>
             </>
           ) : (
             <p className="muted" style={{ marginTop: 0 }}>Click a station to see its source, processes and capacity advice.</p>

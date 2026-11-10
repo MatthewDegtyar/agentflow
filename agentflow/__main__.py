@@ -5,6 +5,7 @@
     python -m agentflow run '{"customer_id": "acme", "title": "...", "text": "..."}' [--wait]
     python -m agentflow load --rate 3 --duration 60
     python -m agentflow query "select step, count(*) from events group by step"
+    python -m agentflow monitor path/to/.agentflow [more/roots ...] [--port 7070]   # watch embedded engines (read-only)
 """
 from __future__ import annotations
 
@@ -34,6 +35,9 @@ def main(argv=None):
     ld.add_argument("--duration", type=float, default=60)
     q = sub.add_parser("query")
     q.add_argument("sql")
+    mo = sub.add_parser("monitor", help="read-only API over every engine work dir under the roots (for the dashboard)")
+    mo.add_argument("roots", nargs="+")
+    mo.add_argument("--port", type=int, default=7070)
     a = ap.parse_args(argv)
 
     if a.cmd == "validate":
@@ -44,6 +48,20 @@ def main(argv=None):
             print(f"invalid: {e}", file=sys.stderr)
             return 1
         print(f"ok: {wf.name}: {len(wf.steps)} steps, {len(wf.flow)} edges")
+        return 0
+    if a.cmd == "monitor":
+        import uvicorn
+        from .monitor import discover
+        roots = [os.path.abspath(r) for r in a.roots]
+        missing = [r for r in roots if not os.path.isdir(r)]
+        if missing:
+            print(f"not a directory: {', '.join(missing)}", file=sys.stderr)
+            return 1
+        os.environ["AGENTFLOW_MONITOR_ROOTS"] = os.pathsep.join(roots)
+        from pathlib import Path
+        n = len(discover([Path(r) for r in roots]))
+        print(f"monitoring {n} work dir(s) under {', '.join(roots)} on http://127.0.0.1:{a.port}", file=sys.stderr)
+        uvicorn.run("agentflow.monitor:app", host="127.0.0.1", port=a.port, log_level="warning")
         return 0
     if a.cmd == "up":
         import uvicorn

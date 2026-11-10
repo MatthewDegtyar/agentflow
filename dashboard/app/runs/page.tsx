@@ -1,8 +1,9 @@
 "use client";
 import Link from "next/link";
-import { fmtMs, usePoll, type QueryResult } from "@/lib/api";
+import { fmtMs, usePoll, useW, withW, type QueryResult } from "@/lib/api";
 
 export default function RunsPage() {
+  const w = useW();
   const { data, error } = usePoll<QueryResult>("/runs?limit=100", 2000);
   if (error && !data) return <p className="error">{error}</p>;
   const rows = data?.rows ?? [];
@@ -18,7 +19,7 @@ export default function RunsPage() {
               const [id, started, session, status, dur, failed] = r as [string, string, string | null, string | null, number | null, number | null];
               return (
                 <tr key={id}>
-                  <td className="mono"><Link href={`/runs/${id}`}>{id}</Link></td>
+                  <td className="mono"><Link href={withW(`/runs/${id}`, w)}>{id}</Link></td>
                   <td>{new Date(started).toLocaleTimeString()}</td>
                   <td>{session ?? "–"}</td>
                   <td><span className={`pill ${status ?? "running"}`}>{status ?? "running"}</span></td>

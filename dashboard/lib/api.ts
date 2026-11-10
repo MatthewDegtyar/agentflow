@@ -1,4 +1,5 @@
 "use client";
+import { useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
 export type StepMetrics = {
@@ -28,7 +29,36 @@ export type Workflow = {
 };
 export type QueryResult = { columns: string[]; rows: unknown[][]; truncated: boolean; elapsed_ms?: number };
 
+// Monitor mode (`agentflow monitor ROOT...`): one API serves many workflows; the selected one travels as ?w=<id>
+// in the page URL and is appended to every API call.
+export type Health = { ok: boolean; mode?: "monitor"; workflow: string | null; roots?: string[]; workflows?: number };
+export type MonitoredWorkflow = {
+  id: string; name: string; dir: string; live: boolean; status: "running" | "stopped" | "lost" | "unknown";
+  pid: number | null; started: number | null; stopped: number | null; agentflow_version: string | null;
+  runs: number; runs_completed: number; runs_failed: number; runs_running: number; dead_letters: number;
+  cost_usd: number; last_event: string | null;
+};
+
+/** Append ?w= (the monitored workflow) to an API path or page href. */
+export function withW(path: string, w: string | null | undefined): string {
+  if (!w) return path;
+  return `${path}${path.includes("?") ? "&" : "?"}w=${encodeURIComponent(w)}`;
+}
+
+/** The workflow selected in monitor mode (?w=), or null. */
+export function useW(): string | null {
+  return useSearchParams().get("w");
+}
+
+function currentW(): string | null {
+  return typeof window === "undefined" ? null : new URLSearchParams(window.location.search).get("w");
+}
+
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
+  return rawApi<T>(withW(path, currentW()), init);
+}
+
+async function rawApi<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`/api${path}`, { ...init, headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) } });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(typeof body?.detail === "string" ? body.detail : `HTTP ${res.status}`);
@@ -36,7 +66,9 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 /** Poll an endpoint; keeps the last good value and exposes the last error. */
-export function usePoll<T>(path: string | null, intervalMs = 2000) {
+export function usePoll<T>(rawPath: string | null, intervalMs = 2000) {
+  const w = useW();
+  const path = rawPath === null ? null : withW(rawPath, rawPath.startsWith("/workflows") || rawPath.startsWith("/health") ? null : w);
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState<string | null>(null);
   const alive = useRef(true);
@@ -46,7 +78,7 @@ export function usePoll<T>(path: string | null, intervalMs = 2000) {
     let timer: ReturnType<typeof setTimeout>;
     const tick = async () => {
       try {
-        const d = await api<T>(path);
+        const d = await rawApi<T>(path);
         if (alive.current) { setData(d); setError(null); }
       } catch (e) {
         if (alive.current) setError((e as Error).message);

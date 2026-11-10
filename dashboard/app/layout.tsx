@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 import Nav from "@/components/Nav";
 import "./globals.css";
 
@@ -11,8 +12,10 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
   return (
     <html lang="en">
       <body>
-        <Nav />
-        <main>{children}</main>
+        <Suspense fallback={<nav className="nav"><span className="brand">agentflow</span></nav>}>
+          <Nav />
+        </Suspense>
+        <main><Suspense fallback={<p className="muted">Loading…</p>}>{children}</Suspense></main>
       </body>
     </html>
   );
