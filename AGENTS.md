@@ -23,7 +23,7 @@ no `requirements.txt` at the root, and no `.python-version` file.
 
 ## Contracts that must not break
 
-Other projects install this repo with `uv pip install "git+https://github.com/MatthewDegtyar/agentflow"`, so these are
+Other projects install this from PyPI as `pyagentflow` (`import agentflow`) or from git, so these are
 public API:
 
 1. **Step HTTP contract**: `GET /health` and `POST /invoke` with the JSON shape in `sdk/python/agentflow_step.py`.
@@ -120,6 +120,16 @@ gh pr merge <n> --squash --delete-branch
 Merge only after the checklist in step 2 passes on the final commit. Then confirm `main` is still green:
 `git checkout main && git pull && uv run pytest -q`.
 
+## Releasing to PyPI
+
+Releases are owner-triggered. Don't tag a release unless the owner asks for one.
+
+1. Bump `version` in `pyproject.toml` (semver; a `BREAKING:` change bumps the minor version while on 0.x), then `uv lock`, and merge to `main`.
+2. `git tag v<version> && git push origin v<version>`. `.github/workflows/release.yml` checks that the tag matches
+   the version, runs the tests, builds, and uploads to PyPI with trusted publishing (no token).
+
+PyPI versions are immutable: a version can't be re-uploaded, even after deleting it.
+
 ## Consumer agents: how to request a change
 
 You're an agent in another project that uses agentflow, and you need something changed. Open a PR (preferred) or an issue.
@@ -132,4 +142,4 @@ You're an agent in another project that uses agentflow, and you need something c
    and the behavior you expect. The maintainer agent will implement it.
 
 To pick up the change in your project after merge, run `uv lock --upgrade-package agentflow && uv sync`, or pin a
-commit: `agentflow @ git+https://github.com/MatthewDegtyar/agentflow@<sha>`.
+commit: `pyagentflow @ git+https://github.com/MatthewDegtyar/agentflow@<sha>`. Released versions: `uv add pyagentflow@latest`.
