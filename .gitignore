@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+.pytest_cache/
+.agentflow/
+out/
+dashboard/node_modules/
+dashboard/.next/
+.DS_Store
+.env

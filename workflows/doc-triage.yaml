@@ -1,0 +1,71 @@
+# Demo workflow. Each step is its own GitHub repo; until those exist, `path:` points at a local stand-in.
+# Remove `path:` (or set AGENTFLOW_USE_REPOS=1) and the runtime clones `repo@ref` instead.
+name: doc-triage
+
+steps:
+  intake:
+    repo: github.com/your-org/agent-intake
+    ref: main
+    path: ../examples/steps/intake        # local stand-in until the repo exists
+    run: python main.py                   # how to start the step's server (the SDK reads $PORT)
+    replicas: 1
+    concurrency: 8
+    timeout_s: 10
+
+  classify:
+    repo: github.com/your-org/agent-classify
+    ref: main
+    path: ../examples/steps/classify
+    run: python main.py
+    replicas: 2
+    concurrency: 4
+    timeout_s: 30
+    retries: 2
+
+  summarize:
+    repo: github.com/your-org/agent-summarize
+    ref: main
+    path: ../examples/steps/summarize
+    run: python main.py
+    replicas: 1
+    concurrency: 2                        # deliberately small: this is where the line backs up
+    timeout_s: 30
+    retries: 1
+
+  notify:
+    repo: github.com/your-org/agent-notify
+    ref: main
+    path: ../examples/steps/notify
+    run: python main.py
+    replicas: 1
+    concurrency: 4
+    timeout_s: 10
+    retries: 3
+
+flow:
+  - from: input                           # where runs enter
+    to: intake
+  - from: intake
+    to: classify
+  - from: classify
+    to: summarize
+    when: output.kind in ['report', 'contract']
+  - from: classify
+    to: notify
+    when: output.priority == 'high'
+  - from: summarize
+    to: sink.jsonl
+    with: { path: out/summaries.jsonl }
+  - from: summarize
+    to: notify
+    when: output.flag == true
+
+session:
+  key: input.customer_id                  # items for one customer share a session across steps
+
+# Sample inputs for `agentflow load` / the dashboard's load button.
+examples:
+  - { customer_id: acme, title: "Q3 operations report", text: "Revenue grew 12%. On-time delivery 97.3%.", kind_hint: report }
+  - { customer_id: globex, title: "Invoice INV-2026-0317", text: "Total due $1,284.50 by Oct 15.", kind_hint: invoice }
+  - { customer_id: initech, title: "Master services agreement", text: "Net-30 terms. 2% late fee.", kind_hint: contract }
+  - { customer_id: acme, title: "URGENT: supplier outage", text: "Line 3 is down, parts delayed.", kind_hint: other, urgent: true }
