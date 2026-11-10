@@ -108,6 +108,12 @@ step.run()                                                                 # ser
 Raising an exception is a retryable failure: its type becomes the `reason` and the traceback is kept. Any language
 works if it serves `GET /health` and `POST /invoke` with the same JSON contract (see `sdk/python/agentflow_step.py`).
 
+**Interpreter and imports.** When `run:` starts with `python` or `python3`, the step runs on its own venv's interpreter
+if it ships a `requirements.txt`, otherwise on the interpreter running agentflow (`sys.executable`). That is the
+runtime's environment, not whatever `python` is first on `PATH`. The SDK is put on the step's `PYTHONPATH` as a private
+copy in `<workdir>/sdk/` holding only `agentflow_step.py`, so an installed runtime never puts its own `site-packages` in
+front of a step's venv. To use a different interpreter, give its path in `run:` (e.g. `run: /usr/bin/python3 main.py`).
+
 ## Event log
 
 One `events` table (DuckDB, so columnar): `ts, event, workflow, run_id, item_id, parent_id, step, replica, attempt,
