@@ -100,6 +100,14 @@ class Engine:
         self.ready = True
         log(f"workflow {self.wf.name!r} ready: {len(self.wf.steps)} steps, {total} worker slots")
 
+    async def __aenter__(self) -> "Engine":
+        """`async with Engine(...) as eng:` starts the steps (quietly) and always stops them."""
+        await self.start(log=lambda *_: None)
+        return self
+
+    async def __aexit__(self, *exc):
+        await self.stop()
+
     async def stop(self):
         self.ready = False
         for t in self._tasks:
@@ -134,6 +142,37 @@ class Engine:
             await self._deliver(edge, payload, run, parent=None, hops=0, source="input")
         self._item_done(run)
         return run.id
+
+    async def wait(self, run_id: str, timeout_s: float | None = None) -> Run:
+        """Wait for a run to finish and return it. Raises asyncio.TimeoutError after timeout_s (the run keeps going)."""
+        run = self.runs[run_id]
+        await asyncio.wait_for(run.done.wait(), timeout_s)
+        return run
+
+    async def run(self, payload, session_id: str | None = None, timeout_s: float | None = None) -> Run:
+        """Start a run and wait for it: `run = await eng.run({...}); run.status, run.outputs`."""
+        return await self.wait(await self.start_run(payload, session_id), timeout_s)
+
+    def run_summary(self, run_id: str) -> dict:
+        """Progress and cost of one run, from the event log (works while it's running too):
+        {run_id, status, steps: {step: {started, completed, retry, dead_letter}}, cost_usd, input_tokens,
+         output_tokens, failures: [{step, reason, error}], outputs}"""
+        self.events.flush()
+        steps: dict = {}
+        for step, event, n in self.events.query(
+                "select step, event, count(*) from events where run_id = ? and event in "
+                "('started', 'completed', 'retry', 'dead_letter') group by all", [run_id])["rows"]:
+            steps.setdefault(step, {"started": 0, "completed": 0, "retry": 0, "dead_letter": 0})[event] = n
+        cost, tin, tout = self.events.query(
+            "select coalesce(sum(cast(data->>'cost_usd' as double)), 0), "
+            "coalesce(sum(cast(data->>'input_tokens' as bigint)), 0), coalesce(sum(cast(data->>'output_tokens' as bigint)), 0) "
+            "from events where run_id = ? and event = 'usage'", [run_id])["rows"][0]
+        failures = [{"step": s, "reason": r, "error": e} for s, r, e in self.events.query(
+            "select step, reason, error from events where run_id = ? and event = 'dead_letter' order by ts", [run_id])["rows"]]
+        run = self.runs.get(run_id)
+        return {"run_id": run_id, "status": run.status if run else None, "steps": steps, "cost_usd": float(cost or 0),
+                "input_tokens": int(tin or 0), "output_tokens": int(tout or 0), "failures": failures,
+                "outputs": list(run.outputs) if run else None}
 
     def _finish_run(self, run: Run, status: str | None = None):
         run.status = status or ("failed" if run.failed_items else "completed")

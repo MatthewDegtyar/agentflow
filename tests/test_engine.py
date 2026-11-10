@@ -106,3 +106,23 @@ def test_end_to_end(tmp_path):
     assert reasons == {"ConnectionError"}
     unrouted = con.execute("select count(*) from events where event = 'unrouted' and step = 'split'").fetchone()[0]
     assert unrouted == 2                                                    # odd items matched no edge
+
+
+def test_embedding_helpers(tmp_path):
+    """async with Engine + eng.run() + eng.run_summary(): the run-once API for projects that embed agentflow."""
+    wf, base, text = load(make(tmp_path))
+
+    async def main():
+        async with Engine(wf, base, text, tmp_path / ".agentflow") as eng:
+            run = await eng.run({"customer": "c2", "n": 2}, timeout_s=30)
+            return run, eng.run_summary(run.id)
+        # engine stopped here
+
+    run, summary = asyncio.run(main())
+    assert run.status == "completed"
+    assert summary["status"] == "completed"
+    assert summary["steps"]["gate"]["completed"] == 1
+    assert summary["steps"]["split"]["completed"] == 1
+    assert summary["steps"]["flaky"]["retry"] >= 1                       # first attempt always fails
+    assert summary["cost_usd"] > 0 and summary["input_tokens"] == 10      # one `double` call
+    assert summary["failures"] == []
