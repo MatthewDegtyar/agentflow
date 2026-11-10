@@ -40,8 +40,11 @@ per-step venvs, process logs), or in `--workdir`.
 
 ### As a library in another project
 
+Published on PyPI as **`pyagentflow`** (the name `agentflow` was taken); the import is still `import agentflow`.
+
 ```bash
-uv pip install "git+https://github.com/MatthewDegtyar/agentflow"        # or: uv add "agentflow @ git+https://github.com/MatthewDegtyar/agentflow"
+uv add pyagentflow                                                      # or: pip install pyagentflow
+uv add "pyagentflow @ git+https://github.com/MatthewDegtyar/agentflow"  # unreleased main
 python -m agentflow up path/to/flow.yaml --workdir .agentflow           # also installed as the `agentflow` command
 ```
 The wheel ships the `agentflow` package and the step SDK as a top-level `agentflow_step` module, so step processes

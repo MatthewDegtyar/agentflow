@@ -23,7 +23,7 @@ def installed(tmp_path_factory):
     tmp = tmp_path_factory.mktemp("install")
     dist = tmp / "dist"
     subprocess.run(["uv", "build", "--wheel", "-q", "-o", str(dist)], cwd=ROOT, check=True)
-    wheel = next(dist.glob("agentflow-*.whl"))
+    wheel = next(dist.glob("pyagentflow-*.whl"))
     venv = tmp / "venv"
     subprocess.run(["uv", "venv", "-q", "-p", f"{sys.version_info.major}.{sys.version_info.minor}", str(venv)],
                    cwd=tmp, check=True)
