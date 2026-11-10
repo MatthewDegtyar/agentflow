@@ -32,6 +32,7 @@ AGENTFLOW_API=http://127.0.0.1:7071 npm run dev                        # if the 
 uv run python -m agentflow run '{"customer_id":"acme","title":"Q3 report","text":"...","kind_hint":"report"}' --wait
 uv run python -m agentflow load --rate 3 --duration 60              # watch `summarize` become the bottleneck
 uv run python -m agentflow query "select step, count(*) from events where event='retry' group by step"
+uv run python -m agentflow monitor path/to/.agentflow                 # watch engines embedded elsewhere (read-only)
 uv run pytest -q
 ```
 
@@ -107,6 +108,33 @@ step.run()                                                                 # ser
 ```
 Raising an exception is a retryable failure: its type becomes the `reason` and the traceback is kept. Any language
 works if it serves `GET /health` and `POST /invoke` with the same JSON contract (see `sdk/python/agentflow_step.py`).
+
+## Monitoring embedded engines
+
+When agentflow is embedded in another program, often as one short-lived engine per run, there's no long-running `up`
+server for the dashboard to talk to. `agentflow monitor` watches those engines read-only through their work dirs:
+
+```bash
+agentflow monitor path/to/.agentflow [more/roots ...] --port 7070    # finds every work dir under the roots
+cd dashboard && npm run dev                                          # AGENTFLOW_API=http://127.0.0.1:7070 by default
+```
+The dashboard detects monitor mode. Its home page lists every workflow found (live ones first, with runs, failures,
+dead letters, cost and last activity), a picker in the nav selects one (`?w=<id>`, the work dir's path relative to the
+root), and the Workflow, Runs and Logs pages work as usual for it. Run and load controls are hidden, because the monitor
+doesn't own the engines.
+
+Every engine leaves these in its work dir for this:
+
+| File | Written | Holds |
+| --- | --- | --- |
+| `engine.json` | at start and stop | workflow name, `status` (running/stopped), pid, host, start/stop time, agentflow version, topology + YAML |
+| `state.json` | every second while running | flow metrics (60 s window), step process health |
+| `events.jsonl` | continuously (existing) | the event log mirror. The monitor queries this, because a running engine holds an exclusive lock on `events.duckdb` |
+
+An engine counts as live when `engine.json` says running, its pid exists and `state.json` is under 15 s old. If the
+process died without stopping, the workflow shows as `lost`. Monitor API: `GET /api/workflows`, then the usual
+`/api/workflow`, `/api/metrics`, `/api/runs`, `/api/runs/{id}`, `POST /api/query`, `/api/steps/{name}/logs`, each
+with `?w=<id>` (see `agentflow/monitor.py`).
 
 ## Event log
 
