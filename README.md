@@ -54,9 +54,14 @@ relative to the YAML file. To embed the engine in-process:
 ```python
 from agentflow import Engine, load
 wf, base_dir, text = load("flow.yaml")
-engine = Engine(wf, base_dir, text, work=Path(".agentflow"))
-await engine.start(); run_id = await engine.start_run({"msg": "hi"}); ...; await engine.stop()
+async with Engine(wf, base_dir, text, work=Path(".agentflow")) as engine:   # starts the steps, always stops them
+    run = await engine.run({"msg": "hi"}, timeout_s=300)                   # start_run + wait
+    print(run.status, run.outputs)                                         # outputs = items no edge routed further
+    print(engine.run_summary(run.id))                                      # per-step started/completed/retry/dead_letter,
+                                                                           # cost_usd, tokens, failures, outputs
 ```
+For progress while a run is going, call `run_id = await engine.start_run(...)`, then poll `engine.run_summary(run_id)`
+until `await engine.wait(run_id, timeout_s)` returns. `engine.start()` / `engine.stop()` still work as before.
 
 ## Workflow YAML
 
