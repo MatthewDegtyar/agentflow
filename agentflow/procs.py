@@ -1,12 +1,19 @@
 """Start and supervise step processes: one per replica, each on its own port. Crashed replicas restart with
-backoff; stdout/stderr go to .agentflow/logs/<step>-<replica>.log and the last lines are kept for the dashboard."""
+backoff; stdout/stderr go to .agentflow/logs/<step>-<replica>.log and the last lines are kept for the dashboard.
+
+Step environment: `python`/`python3` at the start of `run:` means the step's own venv (when it ships
+requirements.txt), else the interpreter running agentflow (sys.executable), never whatever `python` is first on PATH.
+The SDK reaches steps through a private copy, <workdir>/sdk/agentflow_step.py, on PYTHONPATH. That way an installed
+runtime never puts its whole site-packages in front of a step's own venv."""
 from __future__ import annotations
 
 import asyncio
 import importlib.util
 import os
 import shlex
+import shutil
 import socket
+import sys
 import time
 from collections import deque
 from dataclasses import dataclass, field
@@ -31,6 +38,19 @@ def _sdk_dir() -> Path:
 
 
 SDK_DIR = _sdk_dir()
+
+
+def step_sdk_dir(work: Path) -> Path:
+    """A directory containing only agentflow_step.py (copied from SDK_DIR), for step PYTHONPATHs."""
+    dest = work / "sdk"
+    src = SDK_DIR / "agentflow_step.py"
+    target = dest / "agentflow_step.py"
+    if not target.exists() or target.read_bytes() != src.read_bytes():
+        dest.mkdir(parents=True, exist_ok=True)
+        tmp = dest / f".agentflow_step.{os.getpid()}.tmp"
+        shutil.copyfile(src, tmp)
+        os.replace(tmp, target)
+    return dest
 
 
 def free_port() -> int:
@@ -62,17 +82,18 @@ class StepProcesses:
         self.replicas = [Replica(name, i, free_port()) for i in range(step.replicas)]
         self._stopping = False
         self._tasks: list[asyncio.Task] = []
+        self.sdk_dir = step_sdk_dir(work)
 
     def _cmd(self) -> list[str]:
         argv = shlex.split(self.step.run)
-        if self.source.python and argv and argv[0] in ("python", "python3"):
-            argv[0] = self.source.python          # use the step's own venv
+        if argv and argv[0] in ("python", "python3"):
+            argv[0] = self.source.python or sys.executable   # the step's own venv, else the runtime's interpreter
         return argv
 
     async def _spawn(self, r: Replica):
         env = {**os.environ, **self.step.env, "PORT": str(r.port), "AGENTFLOW_STEP": self.name,
                "AGENTFLOW_REPLICA": str(r.index), "PYTHONUNBUFFERED": "1",
-               "PYTHONPATH": os.pathsep.join(filter(None, [str(SDK_DIR), os.environ.get("PYTHONPATH")]))}
+               "PYTHONPATH": os.pathsep.join(filter(None, [str(self.sdk_dir), os.environ.get("PYTHONPATH")]))}
         log_path = self.work / "logs" / f"{self.name}-{r.index}.log"
         log_path.parent.mkdir(parents=True, exist_ok=True)
         r.proc = await asyncio.create_subprocess_exec(*self._cmd(), cwd=self.source.dir, env=env,

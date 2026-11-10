@@ -106,3 +106,54 @@ def test_end_to_end(tmp_path):
     assert reasons == {"ConnectionError"}
     unrouted = con.execute("select count(*) from events where event = 'unrouted' and step = 'split'").fetchone()[0]
     assert unrouted == 2                                                    # odd items matched no edge
+
+
+ENV_STEP = """
+import os, sys
+from agentflow_step import Step
+step = Step()
+
+@step.handler
+def handle(ctx, x):
+    import agentflow_step
+    return {"exe": sys.executable, "sdk": os.path.dirname(os.path.abspath(agentflow_step.__file__)),
+            "pythonpath": os.environ.get("PYTHONPATH", "").split(os.pathsep)}
+
+step.run()
+"""
+
+
+def test_step_environment(tmp_path, monkeypatch):
+    """`python` in run: is the runtime's interpreter (not PATH's), and only the SDK file is put on PYTHONPATH."""
+    import sys
+    d = tmp_path / "steps" / "env"
+    d.mkdir(parents=True)
+    (d / "main.py").write_text(ENV_STEP)
+    # a decoy `python` first on PATH that would fail if it were used
+    decoy = tmp_path / "decoy"
+    decoy.mkdir()
+    (decoy / "python").write_text("#!/bin/sh\nexit 3\n")
+    (decoy / "python").chmod(0o755)
+    monkeypatch.setenv("PATH", f"{decoy}:{__import__('os').environ['PATH']}")
+    wf_path = tmp_path / "wf.yaml"
+    wf_path.write_text("name: env\nsteps:\n  env: {path: steps/env, run: python main.py}\nflow:\n  - {from: input, to: env}\n")
+    wf, base, text = load(wf_path)
+    work = tmp_path / ".agentflow"
+
+    async def main():
+        eng = Engine(wf, base, text, work)
+        await eng.start(log=lambda *_: None)
+        try:
+            rid = await eng.start_run({})
+            await asyncio.wait_for(eng.runs[rid].done.wait(), 30)
+            return eng.runs[rid]
+        finally:
+            await eng.stop()
+
+    run = asyncio.run(main())
+    assert run.status == "completed", run.outputs
+    out = run.outputs[0]["output"]
+    assert Path(out["exe"]).resolve() == Path(sys.executable).resolve()
+    assert Path(out["sdk"]).resolve() == (work / "sdk").resolve()
+    assert Path(out["pythonpath"][0]).resolve() == (work / "sdk").resolve()
+    assert sorted(p.name for p in (work / "sdk").iterdir() if p.name != "__pycache__") == ["agentflow_step.py"]
